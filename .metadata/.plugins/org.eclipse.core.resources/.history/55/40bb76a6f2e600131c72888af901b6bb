@@ -1,0 +1,86 @@
+package pl.put.idss.dw.hadoop.tasks;
+
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Job;
+import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.hadoop.mapreduce.Reducer.Context;
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.mapreduce.lib.reduce.IntSumReducer;
+import org.apache.hadoop.util.GenericOptionsParser;
+
+public class MVMultTask {
+	
+	private List<String> vectorList = new ArrayList<String>();
+	private Text word = new Text();
+	
+	protected void setup(Context context) throws IOException, InterruptedException 
+	{
+		String fileName = context.getConfiguration().get("VECTOR");
+		BufferedReader br = new BufferedReader(new FileReader(fileName));
+		String line = null;  
+		while ((line = br.readLine()) != null) {  
+		   vectorList.add(line);
+		}
+	};
+	
+	
+	
+	public static class MVMapper extends Mapper<Object, Text, Text, IntWritable> 
+	{
+		public void map(Object key, Text value, Context context) throws IOException, InterruptedException 
+		{
+			String line = value.toString();
+			String[] parts = line.trim().split("\\s+");
+			int matrixRow = Integer.parseInt(parts[0]);
+			int matrixColumn = Integer.parseInt(parts[1]);
+			int matrixValue = Integer.parseInt(parts[2]);
+			word.set(Integer.toString(matrixRow));
+			context.write();
+		}
+	}
+	
+	public static void main(String[] args) throws Exception 
+	{
+		Configuration conf = new Configuration();
+		String[] otherArgs = new GenericOptionsParser(conf, args)
+				.getRemainingArgs();
+		if (otherArgs.length != 3) {
+			System.err.println("Usage: mv-mult <input_dir> <output_dir> <vector>");
+			System.exit(2);
+		}
+
+		Job job = new Job(conf, "matrix-vector-mult");
+		job.setJarByClass(MVMultTask.class);
+		
+		conf.set("VECTOR", otherArgs[2]);
+
+		job.setMapperClass(MVMapper.class);
+		job.setMapOutputKeyClass(Text.class);
+		job.setMapOutputValueClass(IntWritable.class);
+		
+		job.setReducerClass(IntSumReducer.class);
+		job.setOutputKeyClass(Text.class);
+		job.setOutputValueClass(IntWritable.class);
+
+		FileInputFormat.addInputPath(job, new Path(otherArgs[0] + "/M.txt"));
+		FileOutputFormat.setOutputPath(job, new Path(otherArgs[1]));
+
+		if (job.waitForCompletion(true)) {
+			System.exit(0);
+		}
+		System.exit(1);
+
+	}
+
+}

@@ -1,11 +1,15 @@
 package pl.put.idss.dw.hadoop.tasks;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Mapper.Context;
 import org.apache.hadoop.mapreduce.lib.input.FileSplit;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
@@ -17,42 +21,86 @@ import org.apache.hadoop.util.GenericOptionsParser;
 
 public class MMMultTask {
 
-	public static class MMMultTaskMapper extends
-			Mapper<Object, Text, IntWritable, Text> {
+	public static class MMMultTaskMapper extends Mapper<Object, Text, Text, Text> 
+	{
+		private Text word = new Text();
+		private Text valueText = new Text();
+		
+		protected static String getInputFileName(Context context) 
+		{
+			FileSplit fs = (FileSplit) context.getInputSplit();
+			return fs.getPath().getName();
+		}
 
-		// ... String getInputFileName(...) { ... }
-
-		@Override
-		public void map(Object key, Text value, Context context)
-				throws IOException, InterruptedException {
+		public void map(Object key, Text value, Context context) throws IOException, InterruptedException 
+		{
+			String line = value.toString();
+			String[] parts = line.trim().split("\\s+");
+			String matrixName = getInputFileName(context);
+			if (matrixName.equals("M.txt")) {
+				word.set(parts[1]);
+				String valueString = "M " + parts[0] + " "  + parts[2];
+				valueText.set(valueString);
+				context.write(word, valueText);
+			}
+			else if (matrixName.equals("N.txt")) {
+				word.set(parts[0]);
+				String valueString = "N " + parts[1] + " " + parts[2];
+				valueText.set(valueString);
+				context.write(word, valueText);
+			}
 		}
 	}
 
-	public static class MMMultTaskReducer extends
-			Reducer<IntWritable, Text, Text, IntWritable> {
-
-		@Override
-		public void reduce(IntWritable key, Iterable<Text> values,
-				Context context) throws IOException, InterruptedException {
+	public static class MMMultTaskReducer extends Reducer<Text, Text, Text, Text> 
+	{
+		private List<String> MList = new ArrayList<String>();
+		private List<String> NList = new ArrayList<String>();
+		
+		private Text keyText = new Text();
+		private Text valueText = new Text();
+		
+		public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException 
+		{
+			while (values.iterator().hasNext()) {
+				String currentLine = values.iterator().next().toString();
+				String[] parts = currentLine.trim().split("\\s+");
+				if (parts[0].equals("M")) {
+					MList.add(parts[1] + " " + parts[2]);
+				}
+				else if (parts[0].equals("N")) {
+					NList.add(parts[1] + " " + parts[2]);
+				}
+			}
+			
+			for (String mLine : MList) {
+				String[] mParts = mLine.trim().split("\\s+");
+				int mValue = Integer.parseInt(mParts[1]);
+				for (String nLine : NList) {
+					String[] nParts = nLine.trim().split("\\s+");
+					int nValue = Integer.parseInt(nParts[1]);
+					int result = mValue * nValue;
+					keyText.set(mParts[0] + " " + nParts[0]);
+					valueText.set(Integer.toString(result));
+					context.write(keyText, valueText);
+				}
+			}
+			
+			MList.clear();
+			NList.clear();
 		}
 	}
 
-	public static class MMMultTask2Mapper extends
-			Mapper<Object, Text, Text, IntWritable> {
-
-		@Override
-		public void map(Object key, Text value, Context context)
-				throws IOException, InterruptedException {
-		}
-	}
-
-	public static class MMMultTask2Reducer extends
-			Reducer<Text, IntWritable, Text, IntWritable> {
-
-		@Override
-		public void reduce(Text key, Iterable<IntWritable> values,
-				Context context) throws IOException, InterruptedException {
-			// ...or you can use reducer from Hadoop :)
+	public static class MMMultTask2Mapper extends Mapper<Object, Text, Text, IntWritable> 
+	{
+		private Text keyText = new Text();
+		
+		public void map(Object key, Text value, Context context) throws IOException, InterruptedException 
+		{
+			String currentLine = value.toString();
+			String[] parts = currentLine.trim().split("\\s+");
+			keyText.set(parts[1] + " " + parts[0]);
+			context.write(keyText, new IntWritable(Integer.parseInt(parts[2])));
 		}
 	}
 
@@ -69,10 +117,15 @@ public class MMMultTask {
 		job.setJarByClass(MMMultTask.class);
 
 		job.setMapperClass(MMMultTaskMapper.class);
+		job.setMapOutputKeyClass(Text.class);
+		job.setMapOutputValueClass(Text.class);
+
 		job.setReducerClass(MMMultTaskReducer.class);
+		job.setOutputKeyClass(Text.class);
+		job.setOutputValueClass(Text.class);
 
 		FileInputFormat.addInputPath(job, new Path(otherArgs[0] + "/M.txt"));
-		FileInputFormat.addInputPath(job, new Path(otherArgs[0] + "/V.txt"));
+		FileInputFormat.addInputPath(job, new Path(otherArgs[0] + "/N.txt"));
 		FileOutputFormat.setOutputPath(job, new Path(otherArgs[1] + "_tmp"));
 
 		if (job.waitForCompletion(true)) {
@@ -83,7 +136,7 @@ public class MMMultTask {
 			job2.setMapOutputKeyClass(Text.class);
 			job2.setMapOutputValueClass(IntWritable.class);
 
-			job2.setReducerClass(MMMultTask2Reducer.class);
+			job2.setReducerClass(IntSumReducer.class);
 			job2.setOutputKeyClass(Text.class);
 			job2.setOutputValueClass(IntWritable.class);
 
